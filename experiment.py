@@ -1,5 +1,6 @@
 import hashlib, json, sys
 from pathlib import Path
+from collections import defaultdict
 
 #computes the SHA256 hash of a file at the given path.
 def hash_file(path):
@@ -33,31 +34,38 @@ def load_baseline(baseline_path):
     with open(baseline_path, "r") as f:
         return json.load(f)
 
-#compares the baseline data with a new scan and returns four lists: renamed files, modified files, added files, and deleted files.
+#compares the baseline data with a new scan and returns four lists: modified, added, deleted, and renamed.
+#renamed is a list of (old_path, new_path) pairs, matched by identical file hash.
 def compare_baseline(baseline, new_scan):
-    old_paths = set(baseline.keys());
-    new_paths = set(new_scan);
+    old_paths, new_paths = set(baseline), set(new_scan)
 
     deleted = sorted(old_paths - new_paths)
     added = sorted(new_paths - old_paths)
     modified = sorted(p for p in old_paths & new_paths if baseline[p] != new_scan[p])
 
-    old_by_hash = {baseline[p]: p for p in deleted}
-    new_by_hash = {new_scan[p]: p for p in added}
+    #hash -> list of deleted paths with that content
+    old_by_hash = defaultdict(list)
+    for p in deleted:
+        old_by_hash[baseline[p]].append(p)
 
-    renamed_hashes = old_by_hash.keys() & new_by_hash.keys()
-    renamed = sorted((old_by_hash[h], new_by_hash[h]) for h in renamed_hashes)
+    renamed, still_added = [], []
+    for p in added:
+        candidates = old_by_hash[new_scan[p]]
+        if candidates:
+            renamed.append((candidates.pop(0), p))
+        else:
+            still_added.append(p)
 
-    added = sorted(p for p in added if new_scan[p] not in renamed_hashes)
-    deleted = sorted(p for p in deleted if baseline[p] not in renamed_hashes)
+    #deleted files that never found a matching added file
+    still_deleted = sorted(p for paths in old_by_hash.values() for p in paths)
 
-    return modified, added, deleted, renamed
+    return modified, still_added, still_deleted, renamed
 
 #main function
 if __name__ == "__main__":
-    baseline_path = load_baseline("baseline.json")
+    baseline = load_baseline("baseline.json")
     new_scan = scan("test_folder")
-    modified, added, deleted, renamed = compare_baseline(baseline_path, new_scan)
+    modified, added, deleted, renamed = compare_baseline(baseline, new_scan)
 
     for p in modified:
         print(f"Modified: {p}")
@@ -68,8 +76,8 @@ if __name__ == "__main__":
     for p in deleted:
         print(f"Deleted: {p}")
 
-    for p in renamed:
-        print(f"Renamed: {p}")
+    for old, new in renamed:
+        print(f"Renamed: {old} -> {new}")
 
     if not (modified or added or deleted or renamed):
         print("No changes detected.")
