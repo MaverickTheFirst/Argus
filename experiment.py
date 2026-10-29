@@ -1,4 +1,4 @@
-import hashlib, json, sys
+import hashlib, json, sys, fnmatch, os
 from pathlib import Path
 from collections import defaultdict
 
@@ -13,15 +13,28 @@ def hash_file(path):
             sha256_hash.update(chunk)
     return sha256_hash.hexdigest()
 
-#scans the directory tree starting from the root path and returns a dictionary mapping file paths to their SHA256 hashes.
-def scan(root):
+#checks if a given file or directory name matches any of the provided exclusion patterns.
+def is_excluded(name, patterns):
+    return any(fnmatch.fnmatch(name, pat) for pat in patterns)
+
+#scans the directory tree starting from the given root path, computes the SHA256 hash for each file, and returns a dictionary mapping file paths to their hashes. It can exclude files or directories based on specified patterns and skip certain paths.
+def scan(root, exclude=(), skip_paths=()):
+    root = Path(root).resolve()
+    skip = {str(Path(p).resolve()) for p in skip_paths}
     results = {}
-    for p in sorted(Path(root).rglob("*")):
-        if p.is_file() and not p.is_symlink():
+
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = sorted(d for d in dirnames if not is_excluded(d, exclude))
+        for name in sorted(filenames):
+            if is_excluded(name, exclude):
+                continue
+            p = Path(dirpath) / name
+            if str(p) in skip or p.is_symlink() or not p.is_file():
+                continue
             try:
                 results[str(p)] = hash_file(p)
             except OSError as e:
-                print(f"Error reading file {p}: {e}")
+                print(f"skipped {p}: {e}")
     return results
 
 #saves the baseline data (a dictionary of file paths and their hashes) to a JSON file at the specified baseline path.
