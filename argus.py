@@ -7,6 +7,8 @@ import os
 import stat
 import sys
 import tempfile
+import logging
+import time
 from collections import defaultdict
 from pathlib import Path
 
@@ -14,6 +16,7 @@ from pathlib import Path
 BASELINE_VERSION = 2
 KEY_BYTES = 32
 META_FIELDS = ("mode", "uid", "gid")
+log = logging.getLogger("argus")
 
 
 # The tool could not do its job (bad setup, missing file, ...). Exit code 2.
@@ -46,6 +49,22 @@ def fmt(field, value):
 # Return True if path is an unreadable path or sits inside an unreadable folder.
 def is_unreadable(path, unreadable):
     return any(path == u or path.startswith(u + os.sep) for u in unreadable)
+
+# Print a line and also record it in the log.
+def emit(message, level=logging.WARNING):
+    print(message)
+    log.log(level, message)
+
+
+# Attach a file handler that writes timestamped (UTC) lines to the log file.
+def add_log_handler(log_path):
+    handler = logging.FileHandler(log_path, encoding="utf-8")
+    formatter = logging.Formatter("%(asctime)s UTC %(levelname)s %(message)s")
+    formatter.converter = time.gmtime
+    handler.setFormatter(formatter)
+    log.setLevel(logging.INFO)
+    log.addHandler(handler)
+    return handler
 
 
 # ---------------------------------------------------------------- keys
