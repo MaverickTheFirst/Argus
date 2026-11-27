@@ -311,24 +311,27 @@ def compare_baseline(old, new, unreadable=()):
 # Print every difference. Returns True if anything changed.
 def report_changes(modified, added, deleted, renamed, meta, unreadable):
     for p in modified:
-        print(f"Modified: {safe(p)}")
+        emit(f"Modified: {safe(p)}")
     for p in added:
-        print(f"Added: {safe(p)}")
+        emit(f"Added: {safe(p)}")
     for p in deleted:
-        print(f"Deleted: {safe(p)}")
+        emit(f"Deleted: {safe(p)}")
     for old, new in renamed:
-        print(f"Renamed: {safe(old)} -> {safe(new)}")
+        emit(f"Renamed: {safe(old)} -> {safe(new)}")
     for p, diffs in sorted(meta.items()):
         print(f"Metadata: {safe(p)}")
         for d in diffs:
             print(f"    {d}")
+        log.warning("Metadata: %s (%s)", safe(p), "; ".join(diffs))
     for p, why in sorted(unreadable.items()):
-        print(f"Unreadable: {safe(p)} ({why})")
+        emit(f"Unreadable: {safe(p)} ({why})")
 
     changed = bool(modified or added or deleted or renamed or meta)
     if changed:
-        print(f"\nSummary: {len(modified)} modified, {len(added)} added, {len(deleted)} deleted, "
-              f"{len(renamed)} renamed, {len(meta)} metadata, {len(unreadable)} unreadable.")
+        print()
+        emit(f"Summary: {len(modified)} modified, {len(added)} added, {len(deleted)} deleted, "
+             f"{len(renamed)} renamed, {len(meta)} metadata, {len(unreadable)} unreadable.",
+             logging.INFO)
     return changed
 
 
@@ -366,6 +369,7 @@ def cmd_init(args):
         return 2
 
     print(f"Baseline created: {len(files)} entries -> {args.baseline}")
+    log.info("Baseline created for %s: %d entries", safe(Path(args.directory).resolve()), len(files))
     for p, why in sorted(unreadable.items()):
         print(f"WARNING: could not read {safe(p)} ({why}); it is NOT protected")
     return 2 if unreadable else 0
@@ -377,7 +381,7 @@ def cmd_check(args):
     payload = load_baseline(args.baseline, key)
     root, exclude = payload["root"], payload["exclude"]
 
-    print(f"Scanning {safe(root)}")
+    emit(f"Scanning {safe(root)}", logging.INFO)
     if exclude:
         print("Exclusions: " + ", ".join(safe(p) for p in exclude))
     if not os.path.isdir(root):
@@ -420,11 +424,32 @@ def cmd_update(args):
 
     save_baseline(new_scan, args.baseline, root, exclude, key)
     print(f"Baseline updated: {len(new_scan)} entries -> {args.baseline}")
+    log.warning("Baseline UPDATED: %d entries (changes accepted)", len(new_scan))
     return 2 if unreadable else 0
 
 
 # Define the commands, run the chosen one and turn every outcome into an exit code.
-def main():
+# Run the chosen command and turn every outcome into an exit code.
+def run(args):
+    try:
+        return args.func(args)
+    except TamperError as e:
+        emit(f"ALERT: {e}", logging.CRITICAL)
+        return 1
+    except ArgusError as e:
+        emit(f"Error: {e}", logging.ERROR)
+        return 2
+    except KeyboardInterrupt:
+        print()
+        emit("Interrupted.", logging.WARNING)
+        return 2
+    except Exception as e:
+        emit(f"Unexpected error ({type(e).__name__}): {e}", logging.ERROR)
+        return 2
+
+
+# Define the commands, set up logging, and run the chosen command.
+def main(argv=None):
     parser = argparse.ArgumentParser(description="Argus: file integrity checker")
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -444,22 +469,24 @@ def main():
     for p in (p_init, p_check, p_update):
         p.add_argument("--baseline", default="baseline.json", help="baseline file path")
         p.add_argument("--key", default="argus.key", help="HMAC key file path")
+        p.add_argument("--log", default="argus.log", help="log file path")
 
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
+
     try:
-        return args.func(args)
-    except TamperError as e:
-        print(f"ALERT: {e}")
-        return 1
-    except ArgusError as e:
-        print(f"Error: {e}")
+        handler = add_log_handler(args.log)
+    except OSError as e:
+        print(f"Error: cannot open log file {args.log}: {e.strerror}")
         return 2
-    except KeyboardInterrupt:
-        print("\nInterrupted.")
-        return 2
-    except Exception as e:
-        print(f"Unexpected error ({type(e).__name__}): {e}")
-        return 2
+
+    try:
+        log.info("%s started", args.command)
+        code = run(args)
+        log.info("%s finished with exit code %d", args.command, code)
+        return code
+    finally:
+        log.removeHandler(handler)
+        handler.close()
 
 
 if __name__ == "__main__":
